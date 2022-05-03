@@ -1,0 +1,18 @@
+{
+    "name": "ebot",
+    "description": "",
+    "services": [
+        {
+            "type": "endpoint",
+            "name": "http://localhost:3978/api/messages",
+            "id": "5a9081a0-c7c4-11ec-b232-512b808426a9",
+            "appId": "",
+            "appPassword": "",
+            "endpoint": "http://localhost:3978/api/messages"
+        }
+    ],
+    "padlock": "",
+    "version": "2.0",
+    "path": "/Users/kevinduranty/Ingénieur IA/P10_Duranty_Kevin/ChatBot/ebot.bot",
+    "overrides": null
+}
