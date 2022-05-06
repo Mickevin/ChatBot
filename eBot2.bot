@@ -1,11 +1,11 @@
 {
-    "name": "ebot",
+    "name": "eBot2",
     "description": "",
     "services": [
         {
             "type": "endpoint",
             "name": "http://localhost:3978/api/messages",
-            "id": "b718b850-cc85-11ec-8b61-c975a53f3562",
+            "id": "c645c7d0-cc73-11ec-a570-67dc7ae5968c",
             "appId": "",
             "appPassword": "",
             "endpoint": "http://localhost:3978/api/messages"
@@ -13,6 +13,6 @@
     ],
     "padlock": "",
     "version": "2.0",
-    "path": "/Users/kevinduranty/Ingénieur IA/P10_Duranty_Kevin/ChatBot/ebot.bot",
+    "path": "/Users/kevinduranty/Ingénieur IA/P10_Duranty_Kevin/ChatBot/eBot2.bot",
     "overrides": null
 }
