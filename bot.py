@@ -1,3 +1,4 @@
+# Scripts développés stockés sur Github permettant l’exécution du pipeline complet pour générer l’application web chatbot, entraîner et évaluer le modèle.
 import json, time, uuid, logging, os, time, random
 
 from azure.cognitiveservices.language.luis.authoring.models import ApplicationCreateObject
