@@ -1,56 +1,36 @@
-from azure.cognitiveservices.language.luis.authoring import LUISAuthoringClient
+import json, time, uuid, logging, os, time, random
+
 from azure.cognitiveservices.language.luis.authoring.models import ApplicationCreateObject
+from azure.cognitiveservices.language.luis.authoring import LUISAuthoringClient
 from azure.cognitiveservices.language.luis.runtime import LUISRuntimeClient
 from msrest.authentication import CognitiveServicesCredentials
 from functools import reduce
 
-import json, time, uuid
-import os
-import time
-
-from azure.cognitiveservices.knowledge.qnamaker.authoring import QnAMakerClient
-from azure.cognitiveservices.knowledge.qnamaker.runtime import QnAMakerRuntimeClient
-from azure.cognitiveservices.knowledge.qnamaker.authoring.models import QnADTO, MetadataDTO, CreateKbDTO, OperationStateType, UpdateKbOperationDTO, UpdateKbOperationDTOAdd, EndpointKeysDTO, QnADTOContext, PromptDTO
-from azure.cognitiveservices.knowledge.qnamaker.runtime.models import QueryDTO
-from msrest.authentication import CognitiveServicesCredentials
+from opencensus.ext.azure.log_exporter import AzureLogHandler
+from sklearn.model_selection import train_test_split
 
 
 class My_bot():
     def __init__(self, api_id = '9b0fd8a7-81ed-402c-a2a0-b534ee7d78cf', 
-                 kb_id = '746a8b49-3d96-492b-9ba7-b5cb30de7309'):
+                 connection_string='InstrumentationKey=adea8d73-a6d0-4c32-a83d-8e7f6380a431'):
         
-        self.code = 4
-        
-        
-        def getEndpointKeys_kb(client):
-            print("Getting runtime endpoint keys...")
-            keys = client.endpoint_keys.get_keys()
-            print("Primary runtime endpoint key: {}.".format(keys.primary_endpoint_key))
-
-            return keys.primary_endpoint_key
-        
+        self.connection_string = connection_string
         self.api_id = api_id
-        self.kb_id = kb_id
+        self.logger = logging.getLogger(__name__)
+        self.logger.addHandler(AzureLogHandler(connection_string=self.connection_string))
         
         self.authoringKey = '123007a9fbfb4ec2bd2e4cd7c88c37fa'
         self.authoringEndpoint = 'https://languep10-authoring.cognitiveservices.azure.com/'
         self.predictionKey = '75800c252f4246e9b665a9015f046091'
         self.predictionEndpoint = 'https://langue-p10.cognitiveservices.azure.com/'
+        self.data_test = False
+
+    # Création d'un Bot LUIS
+    def create_bot(self, Bot_name:str, creat_entities=False):
         
-        
-        self.subscription_key = 'cbb4bcaa0a334e02a1261cf18aa1ad18'
-        self.authoring_endpoint = 'https://qna0.cognitiveservices.azure.com/'
-        self.runtime_endpoint = 'https://qna0.azurewebsites.net'
-        self.clientKB = QnAMakerClient(endpoint=self.authoring_endpoint, 
-                                       credentials=CognitiveServicesCredentials(self.subscription_key))
-         
-        self.queryRuntimeKey = getEndpointKeys_kb(self.clientKB)
-        self.runtimeClient = QnAMakerRuntimeClient(runtime_endpoint=self.runtime_endpoint, 
-                                      credentials=CognitiveServicesCredentials(self.queryRuntimeKey))
-        
-        # We use a UUID to avoid name collisions.
+        self.appName = Bot_name
         self.versionId = "0.1"
-        self.intentName = "FlyMe.Booking"
+        self.intentName = "FlyMe_Booking"
         
         self.client = LUISAuthoringClient(self.authoringEndpoint, 
                                           CognitiveServicesCredentials(self.authoringKey))
@@ -58,79 +38,214 @@ class My_bot():
         self.runtimeCredentials = CognitiveServicesCredentials(self.predictionKey)
         self.clientRuntime = LUISRuntimeClient(endpoint=self.predictionEndpoint, 
                                                credentials=self.runtimeCredentials)
-
         
-        self.data = {
-            'or_city': False, 
-              'dst_city': False,
-              'str_date': False,
-              'end_date': False,
-              'budget': False
-             }
+        # define app basics
+        self.appDefinition = ApplicationCreateObject(name=self.appName, 
+                                                     initial_version_id=self.versionId, culture='en-us')
+        self.api_id = self.client.apps.add(self.appDefinition)
         
-        self.trad = {
-            'or_city': "origin's city", 
-              'dst_city': "destination's city",
-              'str_date': "day's start",
-              'end_date': "end's date",
-              'budget': "your budget"
-             }
-
-
-    def prediction(self, text):
+        print('New botLUIS created !')
+        if creat_entities:
+            return self.creat_intentant()
         
-        def check_reponse(rep):
+        
+    # Création des entités 
+    def creat_intentant(self, mlEntityDefinition = ['or_city', 'dst_city','str_date','end_date', 'budget']):
+        return [self.client.model.add_entity(self.api_id, 
+                                             self.versionId, name=Entity) for Entity in mlEntityDefinition]
     
-            for k in rep.keys():
-                self.data[k] = rep[k]
-
-            data_lost = []
-            for k in self.data.keys():
-                if self.data[k] == False:
-                    data_lost.append(k)
-
-            self.code = len(data_lost)
-            self.data_lost = data_lost
+    # Envoie de phrase d'exemple au BotLUIS
+    def send_example_sentance(self, data, split_train=False, start_train=False):
+        """Le jeu de données data doit être un dataframe possédant trois colone:
+        1. text : Le texte 
+        2. entit : le label de l'entité présente dans le texte
+        3. val : la valeur textuelle de l'entité
+        """
+        
+        if split_train:
+                data , self.data_test = train_test_split(data)
             
-            return self.get_rep()
+        
+        # Fonction permettant de localiser les entités dans le text
+        def get_example_label(utterance, entity_name, value):
+            """Build a EntityLabelObject.
+            This will find the "value" start/end index in "utterance", and assign it to "entity name"
+            """
+            utterance = utterance.lower()
+            value = value.lower()
+            return {
+                'entity_name': entity_name,
+                'start_char_index': utterance.find(value),
+                'end_char_index': utterance.find(value) + len(value)
+            }
+        
+        def labeledExampleUtterance(data, intentName = "FlyMe_Booking"):
+    
+            data_Uterance = []
+            for text in data.text.unique():
+                data_temp = data[data.text == text][['entit','val']]
+                data_json = {
+                    "text": text,
+                    "intentName": intentName,
+                    "entityLabels": [get_example_label(text, data_temp.entit.iloc[n], data_temp.val.iloc[n]) 
+                                     for n in range(len(data_temp))]
+                }
+                data_Uterance.append(data_json)
+
+            return data_Uterance
+        
+        labeledExampleUtteranceWithMLEntity = labeledExampleUtterance(data)
+        n = 0
+        for example in labeledExampleUtteranceWithMLEntity:
+            try: client.examples.add(self.api_id, self.versionId, example)
+            except : n+=1
+        print('ExampleUtteranceWithMLEntity send successfully')
+        print(f'Faill to send {n} example')
+        
+        if start_train:
+            self.train_model()
+        
+    def train_model(self):
+        self.client.train.train_version(self.api_id, self.versionId)
+        waiting = True
+        while waiting:
+            info = self.client.train.get_status(self.api_id, self.versionId)
+
+            waiting = any(map(lambda x: 'Queued' == x.details.status or 'InProgress' == x.details.status, info))
+            if waiting:
+                print ("Waiting 10 seconds for training to complete...")
+                time.sleep(10)
+            else: 
+                print ("trained")
+                waiting = False
+                
+    def publish(self):
+        self.client.apps.update_settings(self.api_id, is_public=True)
+        self.responseEndpointInfo = self.client.apps.publish(app_id, versionId, is_staging=False)
+        
+
+    def prediction(self, text:str):
+        self.runtimeCredentials = CognitiveServicesCredentials(self.predictionKey)
+        self.clientRuntime = LUISRuntimeClient(endpoint=self.predictionEndpoint, credentials=self.runtimeCredentials)
 
         # Production == slot name
-        self.predictionRequest = { "query" : text}
+        predictionRequest = { "query" : text }
 
         predictionResponse = self.clientRuntime.prediction.get_slot_prediction(self.api_id, 
-                                                                                    "Production", 
-                                                                                    self.predictionRequest, 
-                                                                                    show_all_intents=True)
-        rep = predictionResponse.prediction.entities
-        return check_reponse(rep)
+                                                                               "Production", 
+                                                                               predictionRequest, 
+                                                                               show_all_intents=False)
+        return predictionResponse.prediction.entities
     
-    
-    def generate_answer(self, text):
-        print ("Querying knowledge base...")
+    def scoring(self, data, set_=False):
+        if set_==False and self.data_test:
+            label = self.data_test.entit.unique()
+            score = []
 
-        authHeaderValue = "EndpointKey " + self.queryRuntimeKey
+            for n in range(len(label)):
+                rep = self.data_test[self.data_test.entit == label[n]].text.apply(lambda x: self.prediction(x))
 
-        listSearchResults = self.runtimeClient.runtime.generate_answer(self.kb_id, 
-                                                           QueryDTO(question = text), 
-                                                           dict(Authorization=authHeaderValue))
-        return listSearchResults.answers[0].answer
+                score.append(np.array([label[n] in u for u in  rep]).sum()/50*100)
+                print(f'Score "{label[n]}" : {score[n]}%.')
+
+            return score
+        
+        else:
+            label = data.entit.unique()
+            score = []
+
+            for n in range(len(label)):
+                rep = data[data.entit == label[n]].text.apply(lambda x: self.prediction(x))
+
+                score.append(np.array([label[n] in u for u in  rep]).sum()/len(rep)*100)
+                print(f'Score "{label[n]}" : {score[n]}%.')
+
+            return score
+
+
+    # Fonction permettant d'envoyer des allerte de niveau info
+    def info(self, message, dic=None):
+        properties = {'custom_dimensions': dic}
+
+        self.logger.setLevel(logging.INFO)
+        self.logger.info(message, properties)
+
+    # Fonction permettant d'envoyer des allerte de niveau warning  
+    def warning(self, message, dic=None):
+        properties = {'custom_dimensions': dic}
+
+        self.logger.setLevel(logging.WARNING)
+        self.logger.warning(message, properties)
+
+    # Fonction permettant d'envoyer des allerte de niveau error  
+    def error(self, message, dic=None):
+        properties = {'custom_dimensions': dic}
+
+        self.logger.setLevel(logging.ERROR)
+        self.logger.error(message, properties)
+
+    # Fonction permettant d'envoyer des allerte de niveau critical  
+    def critical(self, message, dic=None):
+        properties = {'custom_dimensions': dic}
+
+        self.logger.setLevel(logging.CRITICAL)
+        self.logger.exception(message, extra=properties)
+        
+        
+class AppInsights():
+    def __init__(self, UserID, key):
+        self.key = key
+        self.UserID = UserID
+        self.logger = logging.getLogger(__name__)
+        self.logger.addHandler(AzureEventHandler(connection_string=self.key))
+        self.logger.setLevel(logging.INFO)
+        self.entity = None
+        self.trace = {}
+        self.n_message = 0
+        self.err = 0
     
-    
-    def get_rep(self):
-        code = self.code
-        if code == 0:
-            return bot.generate_answer('0').format(self.data['or_city'][0],
-                                                 self.data['dst_city'][0],
-                                                 self.data['str_date'][0],
-                                                 self.data['end_date'][0],
-                                                 self.data['budget'][0])
-        elif code == 1:
-            return self.generate_answer('1').format(self.trad[self.data_lost[0]])
-        elif code == 2:
-            return self.generate_answer('2').format(self.trad[self.data_lost[0]], self.trad[self.data_lost[0]])
-        elif code == 3:
-            return self.generate_answer('3')
-        elif code == 4:
-            return self.generate_answer('4')
-        elif code == 5:
-            return self.generate_answer('4')
+    def n_messages(self):
+        self.n_message+=1
+        if self.n_message >10 and self.n_message <15:
+            self.warning(f'Warning, to many message User{self.UserID}')
+
+        elif self.n_message >15:
+            self.critical(f'Warning, to many message User{self.UserID}')
+
+    def message_error(self):
+        self.err+=1
+        if self.err >3:
+            self.error(f'To many message eroro UserID {DefaultConfig.CLIENT_ID}')
+
+    # Fonction permettant d'envoyer des allerte de niveau info
+    def info(self, message, entities=False):
+        if entities:
+            self.trace['entities'] = str(list(self.entity.values()))
+            self.trace['errors'] = self.err
+        properties = {'custom_dimensions': self.trace}
+        self.logger.setLevel(logging.INFO)
+        self.logger.info(message, extra=properties)
+        
+    # Fonction permettant d'envoyer des allerte de niveau warning  
+    def warning(self, message):
+        properties = {'custom_dimensions': self.trace}
+        
+        self.logger.setLevel(logging.WARNING)
+        self.logger.warning(message, extra=properties)
+        
+    # Fonction permettant d'envoyer des allerte de niveau error  
+    def error(self, message):
+        properties = {'custom_dimensions': self.trace}
+        
+        self.logger.setLevel(logging.ERROR)
+        self.logger.error(message, extra=properties)
+        
+    # Fonction permettant d'envoyer des allerte de niveau critical  
+    def critical(self, message,entities=False):
+        if entities:
+            self.trace['entities'] = str(list(self.entity.values()))
+            self.trace['errors'] = self.err
+        properties = {'custom_dimensions': self.trace}
+        
+        self.logger.setLevel(logging.CRITICAL)
+        self.logger.critical(message, extra=properties)
